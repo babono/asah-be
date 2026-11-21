@@ -1,0 +1,108 @@
+# asah-be · ASAH backend
+
+Supabase backend for ASAH (Juta Berlian Culinary), used by both clients:
+
+- [asah-app](https://github.com/babono/asah-app): Flutter phone app (staff, mentors, outlet and area managers)
+- [asah-admin](https://github.com/babono/asah-admin): web admin (HQ admin, trainers, training manager, HR)
+
+Postgres with row-level security on every table and permission-checked RPCs, Auth with phone OTP,
+Storage for photos and PDFs, Edge Functions, Realtime. Videos are on Cloudflare Stream; push goes
+through OneSignal.
+
+```
+supabase/
+  migrations/
+    20261118000000_asah_mvp_schema.sql   the MVP schema: 48 tables, RLS, RPCs, default roles (see SCHEMA.md)
+    20261121000000_app_support.sql       additions found while building the app (below)
+  functions/
+    stream-upload     Cloudflare Stream direct-upload URL + media_files row (RLS decides who may upload)
+    stream-playback   signed HLS / MP4 URLs, only if the caller can read the media_files row
+    stream-webhook    Cloudflare callback: marks videos ready / failed with duration
+    admin-users       creates staff accounts (one or a spreadsheet import) with the Staff role
+    push              sends each new notifications row through OneSignal
+  tests/              behaviour tests for plain Postgres (psql)
+  bootstrap_first_admin.sql   makes the first HQ admin
+  seed_example.sql            example org, checklists, module and path for testing
+  SCHEMA.md                   tables by module and how access works
+```
+
+## Setup
+
+```bash
+supabase link --project-ref <ref>
+supabase db push
+```
+
+In the dashboard:
+
+1. **Database › Extensions**: enable `pg_cron` (`pg_net` is enabled by the second migration). Run the
+   `cron.schedule` lines at the end of both migrations.
+2. **Authentication › Providers › Phone**: enable it with an SMS provider (Twilio, Vonage,
+   MessageBird...). For development, add test numbers with fixed OTPs. Sign-ups stay off; HQ
+   creates accounts.
+3. **First admin**: add a user with a phone in Authentication › Users, then run
+   `supabase/bootstrap_first_admin.sql` with that phone.
+4. Optional: `supabase/seed_example.sql` for test data (replace names before the pilot).
+
+### Edge Functions and secrets
+
+```bash
+supabase secrets set \
+  CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_STREAM_API_TOKEN=... CLOUDFLARE_STREAM_CUSTOMER_CODE=... \
+  CLOUDFLARE_STREAM_WEBHOOK_SECRET=... \
+  ONESIGNAL_APP_ID=... ONESIGNAL_REST_API_KEY=... PUSH_HOOK_SECRET=<random>
+
+supabase functions deploy stream-upload stream-playback admin-users
+supabase functions deploy stream-webhook push --no-verify-jwt
+```
+
+**Cloudflare Stream**: create an API token with *Stream: Edit*. The customer code is in any Stream
+URL (`https://customer-<code>.cloudflarestream.com/...`). Videos require signed URLs. Register the
+webhook and store the returned secret as `CLOUDFLARE_STREAM_WEBHOOK_SECRET`:
+
+```bash
+curl -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/stream/webhook" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"notificationUrl":"https://<ref>.supabase.co/functions/v1/stream-webhook"}'
+```
+
+**Push**: store the hook in Vault so the `notifications_push` trigger can call the `push` function.
+Until then notifications still show in the app's inbox.
+
+```sql
+select vault.create_secret('https://<ref>.supabase.co/functions/v1/push', 'push_hook_url');
+select vault.create_secret('<same value as PUSH_HOOK_SECRET>', 'push_hook_secret');
+```
+
+## Contract for clients
+
+- Sign in with `signInWithOtp(phone, shouldCreateUser: false)` then `verifyOTP(type: sms)`.
+- Read what the user may do with `rpc('my_permissions')` (permission, scope type, scope id). The
+  server checks every action again; clients only hide what would be refused.
+- State changes with business rules go through RPCs (`submit_checklist_run`, `start_quiz_attempt`,
+  `submit_quiz_attempt`, `score_practical`, `assign_mentor`, `raise_issue`, `assign_issue`,
+  `fix_issue`, `verify_issue`, `review_module_version`, ...). See `SCHEMA.md`.
+- Photos and PDFs: upload to bucket `asah-media` (`personal/<outlet>/<user>/<uuid>.jpg` or
+  `training/<uuid>.<ext>`), then insert a `media_files` row; read with signed URLs.
+- Videos: call `stream-upload`, POST the file (multipart, field `file`) to the returned URL; play with
+  `stream-playback`.
+- Names of colleagues: `rpc('people_names', {p_ids})`.
+
+## What `20261121000000_app_support.sql` adds
+
+The MVP schema is unchanged; this migration fills gaps:
+
+| Gap | Fix |
+| --- | --- |
+| A trainee could not read their mentor's profile | Policy `trainee reads own mentor` |
+| Staff could not see colleagues' names in issue timelines without `user.view` | RPC `people_names(ids)`, limited to people the caller works with |
+| Area managers (no outlet of their own) could not upload audit photos | Policy `upload media for outlets in scope` |
+| No storage bucket for photos and PDFs | Private bucket `asah-media`; reading an object requires reading its `media_files` row |
+| Reminders for A2, M3, M4 were not scheduled | `app.remind_due_checklists`, `app.remind_mentor_checkins`, `app.escalate_behind_trainees` |
+| `notifications` rows never reached phones | Trigger → `pg_net` → `push` function → OneSignal; Realtime on `notifications` |
+
+## Not yet verified
+
+- The behaviour tests in `supabase/tests` run on plain Postgres (`psql -f 00_supabase_stub.sql`,
+  then the migrations, then `10_behaviour_tests.sql`). They were not run for the second migration.
+- The Edge Functions were not type-checked with Deno yet (`deno check supabase/functions/*/index.ts`).

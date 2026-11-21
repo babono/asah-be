@@ -1,0 +1,13 @@
+# Minimal Supabase CLI config for this project. Run `supabase link --project-ref <ref>`
+# before `supabase db push` / `supabase functions deploy`.
+project_id = "asah"
+
+[auth.sms]
+enable_signup = false   # accounts are created by HQ in the admin web (F4)
+enable_confirmations = true
+
+[functions.stream-webhook]
+verify_jwt = false
+
+[functions.push]
+verify_jwt = false
