@@ -55,6 +55,36 @@ export async function enableDownload(uid: string): Promise<{ status: string; per
   return { status: d.status ?? "inprogress", percentComplete: d.percentComplete ?? 0 };
 }
 
+/**
+ * Starts a resumable (tus) upload for files of any size. Returns the one-time
+ * upload URL the client PATCHes to, and the video uid.
+ * https://developers.cloudflare.com/stream/uploading-videos/direct-creator-uploads/#upload-via-tus
+ */
+export async function createTusUpload(opts: { length: number; maxDurationSeconds: number; name?: string }) {
+  if (!ACCOUNT_ID || !API_TOKEN) throw new HttpError(500, "Cloudflare Stream is not configured");
+  const b64 = (v: string) => btoa(unescape(encodeURIComponent(v)));
+  const metadata = [
+    `maxdurationseconds ${b64(String(opts.maxDurationSeconds))}`,
+    "requiresignedurls",
+    ...(opts.name ? [`name ${b64(opts.name)}`] : []),
+  ].join(",");
+  const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/stream?direct_user=true`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${API_TOKEN}`,
+      "Tus-Resumable": "1.0.0",
+      "Upload-Length": String(opts.length),
+      "Upload-Metadata": metadata,
+    },
+  });
+  const location = res.headers.get("Location");
+  const uid = res.headers.get("stream-media-id");
+  if (!res.ok || !location || !uid) {
+    throw new HttpError(502, `Cloudflare Stream tus: ${res.status} ${await res.text()}`);
+  }
+  return { location, uid };
+}
+
 export function streamUrls(token: string) {
   if (!CUSTOMER_CODE) throw new HttpError(500, "CLOUDFLARE_STREAM_CUSTOMER_CODE is not set");
   const base = `https://customer-${CUSTOMER_CODE}.cloudflarestream.com/${token}`;

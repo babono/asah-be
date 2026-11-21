@@ -15,12 +15,13 @@ supabase/
     20261118000000_asah_mvp_schema.sql   the MVP schema: 48 tables, RLS, RPCs, default roles (see SCHEMA.md)
     20261121000000_app_support.sql       additions found while building the app (below)
   functions/
-    stream-upload     Cloudflare Stream direct-upload URL + media_files row (RLS decides who may upload)
+    stream-upload     Cloudflare Stream basic direct upload (≤200 MB) + media_files row; used by the phone app
+    stream-tus-upload resumable tus upload (any size) + media_files row; used by the admin web
     stream-playback   signed HLS / MP4 URLs, only if the caller can read the media_files row
     stream-webhook    Cloudflare callback: marks videos ready / failed with duration
     admin-users       creates staff accounts (one or a spreadsheet import) with the Staff role
     push              sends each new notifications row through OneSignal
-  tests/              behaviour tests for plain Postgres (psql)
+  tests/              behaviour tests, run in PGlite (npm run test:db)
   bootstrap_first_admin.sql   makes the first HQ admin
   seed_example.sql            example org, checklists, module and path for testing
   SCHEMA.md                   tables by module and how access works
@@ -52,7 +53,7 @@ supabase secrets set \
   CLOUDFLARE_STREAM_WEBHOOK_SECRET=... \
   ONESIGNAL_APP_ID=... ONESIGNAL_REST_API_KEY=... PUSH_HOOK_SECRET=<random>
 
-supabase functions deploy stream-upload stream-playback admin-users
+supabase functions deploy stream-upload stream-tus-upload stream-playback admin-users
 supabase functions deploy stream-webhook push --no-verify-jwt
 ```
 
@@ -84,8 +85,9 @@ select vault.create_secret('<same value as PUSH_HOOK_SECRET>', 'push_hook_secret
   `fix_issue`, `verify_issue`, `review_module_version`, ...). See `SCHEMA.md`.
 - Photos and PDFs: upload to bucket `asah-media` (`personal/<outlet>/<user>/<uuid>.jpg` or
   `training/<uuid>.<ext>`), then insert a `media_files` row; read with signed URLs.
-- Videos: call `stream-upload`, POST the file (multipart, field `file`) to the returned URL; play with
-  `stream-playback`.
+- Videos: either call `stream-upload` and POST the file (multipart, field `file`) to the returned URL,
+  or use a tus client with endpoint `functions/v1/stream-tus-upload?kind=training_video|practical_video`
+  (the media id comes back in the `X-Media-File-Id` header). Play with `stream-playback`.
 - Names of colleagues: `rpc('people_names', {p_ids})`.
 
 ## What `20261121000000_app_support.sql` adds
@@ -101,8 +103,18 @@ The MVP schema is unchanged; this migration fills gaps:
 | Reminders for A2, M3, M4 were not scheduled | `app.remind_due_checklists`, `app.remind_mentor_checkins`, `app.escalate_behind_trainees` |
 | `notifications` rows never reached phones | Trigger → `pg_net` → `push` function → OneSignal; Realtime on `notifications` |
 
-## Not yet verified
+## Checks
 
-- The behaviour tests in `supabase/tests` run on plain Postgres (`psql -f 00_supabase_stub.sql`,
-  then the migrations, then `10_behaviour_tests.sql`). They were not run for the second migration.
-- The Edge Functions were not type-checked with Deno yet (`deno check supabase/functions/*/index.ts`).
+```bash
+npm install
+npm run test:db          # migrations + 65 behaviour checks in PGlite (Postgres in WASM), no Docker
+npm run check:functions  # type-checks the Edge Functions with Deno
+```
+
+`test:db` runs `00_supabase_stub.sql` (auth, storage, vault and pg_net stand-ins), both migrations,
+then `10_behaviour_tests.sql` (40 checks: least privilege, separation of duties, quiz grading,
+practical tests, checklist submit with geofence, issues, anonymous ratings, deactivation) and
+`20_app_support_tests.sql` (25 checks for the second migration).
+
+Not covered yet: the Edge Functions against live Cloudflare Stream and OneSignal, and pg_cron
+scheduling (the job functions themselves are tested).

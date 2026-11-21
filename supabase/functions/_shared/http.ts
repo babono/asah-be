@@ -3,7 +3,9 @@ import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, tus-resumable, upload-length, upload-metadata",
+  "Access-Control-Expose-Headers": "location, tus-resumable, x-media-file-id",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
