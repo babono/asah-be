@@ -24,6 +24,8 @@ supabase/
   tests/              behaviour tests, run in PGlite (npm run test:db)
   bootstrap_first_admin.sql   makes the first HQ admin
   seed_example.sql            example org, checklists, module and path for testing
+  seed_demo.sql               the client demo: 5 outlets, 23 people, 4 weeks of history (see Demo)
+  demo_reset.sql              empties the data so seed_demo.sql can run again
   SCHEMA.md                   tables by module and how access works
 ```
 
@@ -75,6 +77,44 @@ select vault.create_secret('https://<ref>.supabase.co/functions/v1/push', 'push_
 select vault.create_secret('<same value as PUSH_HOOK_SECRET>', 'push_hook_secret');
 ```
 
+## Demo
+
+The live project (`ovrmicpviebbysbeupdg`) holds mock data for the client demo from `seed_demo.sql`:
+Dapur Berlian (Seminyak, Canggu, Sanur) and Kopi Berlian (Kuta, Renon), 23 people, six modules and
+four weeks of checklist history, issues, audits and mentor ratings. Only the training video
+"3 Seconds Rule of Eye Contact" is real; it is in Storage (`asah-media/training/8a000000-…-0001.mp4`,
+compressed to 1080p), not Cloudflare Stream yet. `require_geofence` is off so checklists can be
+submitted away from the outlets.
+
+Sign-in uses Supabase test numbers, so no SMS is sent. In the dashboard, **Authentication ›
+Sign In / Providers › Phone**: enable it, pick any SMS provider with placeholder credentials (it is
+never called for test numbers) and set **Test phone numbers and OTPs** to
+
+```
+6281100000001=123456,6281100000002=123456,6281100000003=123456,6281100000004=123456,6281100000005=123456,6281100000006=123456,6281100000007=123456
+```
+
+| Phone (+62) | Person | Use it to show |
+| --- | --- | --- |
+| 811 0000 001 | Rina Wijaya, HQ admin + HQ trainer | Admin web: setup, modules, checklists, dashboards |
+| 811 0000 002 | Dewi Lestari, Training manager + HR | Admin web: approve "Handling guest complaints", mentor ratings |
+| 811 0000 003 | Budi Santoso, Area manager (Badung, Denpasar) | App: area view, audit visit |
+| 811 0000 004 | Made Ayu Pratiwi, Outlet manager, Seminyak | App: team, accept the chiller fix, assign issues |
+| 811 0000 005 | Komang Adi Saputra, Captain + Mentor, Seminyak | App: mentor Putu, fix the soap dispenser issue |
+| 811 0000 006 | Putu Sari Dewi, new Server, Seminyak (day 4) | App: eye-contact video and quiz, checklists |
+| 811 0000 007 | Wayan Darma, Cook + Mentor, Seminyak | App: fridge temperature log, mentee behind on training |
+
+Dates are relative to when the seed ran, and every day nobody fills the checklists they turn
+"missed". The morning of a demo, start again with fresh dates (deletes everything except roles,
+permissions, settings and auth users):
+
+```bash
+supabase link --project-ref ovrmicpviebbysbeupdg
+npm run demo:reset
+```
+
+`npm run test:seed` checks the seed (and a reset + reseed) in PGlite first.
+
 ## Contract for clients
 
 - Sign in with `signInWithOtp(phone, shouldCreateUser: false)` then `verifyOTP(type: sms)`.
@@ -85,7 +125,8 @@ select vault.create_secret('<same value as PUSH_HOOK_SECRET>', 'push_hook_secret
   `fix_issue`, `verify_issue`, `review_module_version`, ...). See `SCHEMA.md`.
 - Photos and PDFs: upload to bucket `asah-media` (`personal/<outlet>/<user>/<uuid>.jpg` or
   `training/<uuid>.<ext>`), then insert a `media_files` row; read with signed URLs.
-- Videos: either call `stream-upload` and POST the file (multipart, field `file`) to the returned URL,
+- Videos: Cloudflare Stream; until it is configured, the app stores practical videos in `asah-media`
+  and `stream-playback` returns a signed Storage URL for any video there. Either call `stream-upload` and POST the file (multipart, field `file`) to the returned URL,
   or use a tus client with endpoint `functions/v1/stream-tus-upload?kind=training_video|practical_video`
   (the media id comes back in the `X-Media-File-Id` header). Play with `stream-playback`.
 - Names of colleagues: `rpc('people_names', {p_ids})`.
@@ -122,6 +163,7 @@ Never change the schema in the dashboard: write a migration, so the repo stays t
 ```bash
 npm install
 npm run test:db          # migrations + 65 behaviour checks in PGlite (Postgres in WASM), no Docker
+npm run test:seed        # migrations + seed_demo.sql, then reset and seed again
 npm run check:functions  # type-checks the Edge Functions with Deno
 ```
 

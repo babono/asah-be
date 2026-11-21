@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "test:db": "node supabase/tests/run.mjs",
+    "test:seed": "node supabase/tests/run.mjs --seed",
+    "demo:reset": "supabase db query --linked -f supabase/demo_reset.sql && supabase db query --linked -f supabase/seed_demo.sql",
     "check:functions": "npx --yes deno@2 check --config supabase/functions/deno.json supabase/functions/*/index.ts"
   },
   "devDependencies": {

@@ -3,6 +3,9 @@ import { SupabaseClient, User } from "jsr:@supabase/supabase-js@2";
 import { HttpError } from "./http.ts";
 import { STREAM_BUCKET } from "./cloudflare.ts";
 
+/** Supabase Storage bucket for photos, PDFs and Storage-hosted videos. */
+export const MEDIA_BUCKET = "asah-media";
+
 export const VIDEO_LIMITS: Record<string, number> = {
   practical_video: 5 * 60, // trainees record short practical tests
   training_video: 30 * 60,
