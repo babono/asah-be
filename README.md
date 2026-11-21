@@ -103,6 +103,20 @@ The MVP schema is unchanged; this migration fills gaps:
 | Reminders for A2, M3, M4 were not scheduled | `app.remind_due_checklists`, `app.remind_mentor_checkins`, `app.escalate_behind_trainees` |
 | `notifications` rows never reached phones | Trigger → `pg_net` → `push` function → OneSignal; Realtime on `notifications` |
 
+## Deploying
+
+There is one Supabase project for the MVP (the live one), so deploys are manual:
+
+1. Merge to `main`. The **Test** workflow runs on every PR and push.
+2. GitHub › Actions › **Deploy** › Run workflow. Leave *Dry run* on first to see which migrations
+   would apply, then run again with it off.
+
+Repository secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`.
+Edge Function secrets (Cloudflare, OneSignal) are set once with `supabase secrets set`.
+To require a second approver, add reviewers to the `production` environment in the repo settings.
+
+Never change the schema in the dashboard: write a migration, so the repo stays the source of truth.
+
 ## Checks
 
 ```bash
