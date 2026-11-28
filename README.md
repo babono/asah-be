@@ -54,10 +54,12 @@ In the dashboard:
 supabase secrets set \
   CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_STREAM_API_TOKEN=... CLOUDFLARE_STREAM_CUSTOMER_CODE=... \
   CLOUDFLARE_STREAM_WEBHOOK_SECRET=... \
-  ONESIGNAL_APP_ID=... ONESIGNAL_REST_API_KEY=... PUSH_HOOK_SECRET=<random>
+  ONESIGNAL_APP_ID=... ONESIGNAL_REST_API_KEY=... PUSH_HOOK_SECRET=<random> \
+  AI_PROVIDER=qwen AI_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1 \
+  AI_MODEL=qwen3-vl-plus AI_API_KEY=... AI_WORKER_SECRET=<random>
 
 supabase functions deploy stream-upload stream-tus-upload stream-playback admin-users
-supabase functions deploy stream-webhook push --no-verify-jwt
+supabase functions deploy stream-webhook push ai-photo-check --no-verify-jwt
 ```
 
 **Cloudflare Stream**: create an API token with *Stream: Edit*. The customer code is in any Stream
@@ -77,6 +79,25 @@ Until then notifications still show in the app's inbox.
 select vault.create_secret('https://<ref>.supabase.co/functions/v1/push', 'push_hook_url');
 select vault.create_secret('<same value as PUSH_HOOK_SECRET>', 'push_hook_secret');
 ```
+
+**AI photo check**: any OpenAI-compatible vision API works; switching provider is `AI_BASE_URL` +
+`AI_MODEL` only. For Qwen, create the API key in Alibaba Cloud Model Studio in the **Singapore**
+region (keys only work in their own region). Store the worker secret in Vault and schedule the
+worker (needs `pg_cron`; replace `<ref>`):
+
+```sql
+select vault.create_secret('<same value as AI_WORKER_SECRET>', 'ai_worker_secret');
+select cron.schedule('asah-ai-photo-check', '* * * * *', $$
+  select net.http_post(
+    url     := 'https://<ref>.supabase.co/functions/v1/ai-photo-check',
+    headers := jsonb_build_object('Content-Type', 'application/json',
+                 'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'ai_worker_secret')),
+    body    := '{}'::jsonb)
+$$);
+select cron.schedule('asah-ai-requeue', '*/10 * * * *', $$select app.requeue_stale_ai_checks()$$);
+```
+
+The kill switch is `app_settings.ai_photo_check.mode = 'off'`; the pilot starts in `shadow`.
 
 ## Demo
 
@@ -134,6 +155,9 @@ npm run demo:reset
 - Formal training: read `formal_trainings` (mentor, trainee, and anyone with `mentorship.view`
   or `mentorship.manage` at the outlet); write only through `request_formal_training`,
   `respond_formal_training` and `cancel_formal_training` (see below).
+- AI photo check: staff see nothing. Reviewers (`ai_check.review`) read `ai_photo_checks` for their
+  scope and answer with `review_ai_photo_check(p_check, 'clean' | 'not_clean', p_note?)`. Issue
+  timelines can contain the event type `dismissed` (AI false alarm closed on review).
 
 ## What `20261121000000_app_support.sql` adds
 
@@ -161,6 +185,27 @@ A formal "on the spot" training session (Asuh) between a mentor and their traine
 Every notification carries `data = {formal_training_id, mentorship_id, scheduled_at}`. Ending a
 mentorship cancels its upcoming sessions.
 
+## What `20261128000000_ai_photo_check.sql` adds
+
+Photos on checklist items marked "AI check" are judged by a vision model after submit, against
+plain-language criteria written by HQ. **AI flags, people decide**: a verdict never changes
+`compliance_pct` or any staff score, and never blocks submitting.
+
+| Object | What |
+| --- | --- |
+| `checklist_items.ai_check_enabled`, `ai_criteria` | Per item; only on photo items, criteria required |
+| `ai_photo_checks` | One row per photo: criteria and prompt version snapshot, mode at enqueue, verdict, reasons, tokens, cost, latency, attempts, linked issue, manager review |
+| `app_settings.ai_photo_check` | `mode` (`off` / `shadow` / `flag`), `prompt_version`, `flag_min_confidence` (0.8), `max_attempts` (3), `max_checks_per_day` (2000), token prices |
+| permission `ai_check.review` | Outlet manager, Area manager |
+| trigger `checklist_runs_enqueue_ai` | Queues one check per photo when a run is submitted (not in mode `off`) |
+| `ai_claim_photo_checks`, `ai_complete_photo_check`, `ai_fail_photo_check` | **service_role only**, called by the `ai-photo-check` function. In `flag` mode a confident, usable, right-area `not_clean` on an answer that passed raises an `ai_check` issue and notifies `issue.assign` holders |
+| `review_ai_photo_check(p_check, p_label, p_note?)` | Reviewer confirms or overrules, once per check, not on a run they submitted. `not_clean` with no issue raises one; `clean` on a still-open AI issue closes it as a false alarm (event `dismissed`) |
+| `v_ai_check_agreement` | Per outlet, item, prompt version and model: checked, reviewed, agreed, false flags, misses, unsure, cost |
+
+The worker (`supabase/functions/ai-photo-check`) claims 10 checks a minute, 3 at a time, with a
+30 s model timeout; prompts live in `prompts/` by version. Never reword a released prompt: add a
+new version and change `prompt_version`, so the agreement view stays comparable.
+
 ## Deploying
 
 There is one Supabase project for the MVP (the live one), so deploys are manual:
@@ -170,7 +215,7 @@ There is one Supabase project for the MVP (the live one), so deploys are manual:
    would apply, then run again with it off.
 
 Repository secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`.
-Edge Function secrets (Cloudflare, OneSignal) are set once with `supabase secrets set`.
+Edge Function secrets (Cloudflare, OneSignal, AI) are set once with `supabase secrets set`.
 To require a second approver, add reviewers to the `production` environment in the repo settings.
 
 Never change the schema in the dashboard: write a migration, so the repo stays the source of truth.
@@ -179,17 +224,19 @@ Never change the schema in the dashboard: write a migration, so the repo stays t
 
 ```bash
 npm install
-npm run test:db          # migrations + 98 behaviour checks in PGlite (Postgres in WASM), no Docker
+npm run test:db          # migrations + 120 behaviour checks in PGlite (Postgres in WASM), no Docker
 npm run test:seed        # migrations + seed_demo.sql, then reset and seed again
 npm run check:functions  # type-checks the Edge Functions with Deno
+npm run test:functions   # Edge Function unit tests (model and Supabase faked)
 ```
 
 `test:db` runs `00_supabase_stub.sql` (auth, storage, vault and pg_net stand-ins), the migrations,
 then `10_behaviour_tests.sql` (40 checks: least privilege, separation of duties, quiz grading,
 practical tests, checklist submit with geofence, issues, anonymous ratings, deactivation) and
-`20_app_support_tests.sql` (25 checks for the second migration) and `30_formal_training_tests.sql`
+`20_app_support_tests.sql` (25 checks for the second migration), `30_formal_training_tests.sql`
 (33 checks: request, approve, decline rules, visibility by outlet, overlap, expiry, cancel,
-notifications, no direct writes).
+notifications, no direct writes) and `40_ai_photo_check_tests.sql` (22 checks: enqueue, claim,
+flag vs shadow, cost, retries, review rules, false-alarm close, scoping, compliance untouched).
 
 Not covered yet: the Edge Functions against live Cloudflare Stream and OneSignal, and pg_cron
 scheduling (the job functions themselves are tested).
