@@ -1,7 +1,7 @@
 -- =============================================================================
 -- ASAH demo data (mock): 5 outlets in Bali, 23 people, 6 modules (one with the
 -- client's real "3 Seconds Rule of Eye Contact" video), 6 checklists with four
--- weeks of history, issues, audits, mentorships and ratings.
+-- weeks of history, issues, audits, mentorships, ratings and formal trainings.
 --
 -- Everything except the eye-contact video is made up for the client demo.
 -- Replace or delete it before the pilot.
@@ -338,6 +338,32 @@ insert into public.mentor_ratings (mentorship_id, mentor_id, rater_id, score, co
   ('75000000-0000-0000-0000-000000000002', pg_temp.u('6281100000005'), pg_temp.u('6281100000101'), 5, 'Very patient, showed me every step of the opening checklist.', now() - interval '127 days'),
   ('75000000-0000-0000-0000-000000000003', pg_temp.u('6281100000005'), pg_temp.u('6281100000102'), 4, 'Helpful, but busy on weekends.', now() - interval '79 days'),
   ('75000000-0000-0000-0000-000000000004', pg_temp.u('6281100000005'), pg_temp.u('6281100000109'), 5, 'Explained why, not only how.', now() - interval '169 days');
+
+-- Formal training (Komang and Putu): one approved for tomorrow 10:00, one Putu
+-- asked for that Komang still has to answer. Times are Seminyak local (WITA).
+insert into public.formal_trainings (id, mentorship_id, mentor_id, trainee_id, outlet_id, scheduled_at, duration_minutes,
+                                     topic, note, status, requested_by, responded_by, responded_at, response_note, created_at) values
+  ('77000000-0000-0000-0000-000000000001', '75000000-0000-0000-0000-000000000001', pg_temp.u('6281100000005'), pg_temp.u('6281100000006'),
+   '30000000-0000-0000-0000-000000000001', (current_date + 1 + time '10:00') at time zone 'Asia/Makassar', 30,
+   'Table setting on the floor', 'Before lunch service, at table 12.', 'approved',
+   pg_temp.u('6281100000005'), pg_temp.u('6281100000006'), now() - interval '20 hours', 'Siap, Kak!', now() - interval '1 day'),
+  ('77000000-0000-0000-0000-000000000002', '75000000-0000-0000-0000-000000000001', pg_temp.u('6281100000005'), pg_temp.u('6281100000006'),
+   '30000000-0000-0000-0000-000000000001', (current_date + 3 + time '14:00') at time zone 'Asia/Makassar', 30,
+   'Handling a guest complaint', 'I am not sure what to say when food is late.', 'requested',
+   pg_temp.u('6281100000006'), null, null, null, now() - interval '2 hours');
+
+insert into public.notifications (user_id, type, title, body, data, created_at)
+select n.user_id, n.type, n.title, f.topic,
+       jsonb_build_object('formal_training_id', f.id, 'mentorship_id', f.mentorship_id, 'scheduled_at', f.scheduled_at),
+       n.created_at
+from (values
+  (pg_temp.u('6281100000005'), '77000000-0000-0000-0000-000000000001'::uuid, 'formal_training_approved', 'Putu Sari Dewi approved your formal training', now() - interval '20 hours'),
+  (pg_temp.u('6281100000004'), '77000000-0000-0000-0000-000000000001'::uuid, 'formal_training_scheduled', 'Formal training scheduled: Komang Adi Saputra with Putu Sari Dewi', now() - interval '20 hours'),
+  (pg_temp.u('6281100000003'), '77000000-0000-0000-0000-000000000001'::uuid, 'formal_training_scheduled', 'Formal training scheduled: Komang Adi Saputra with Putu Sari Dewi', now() - interval '20 hours'),
+  (pg_temp.u('6281100000002'), '77000000-0000-0000-0000-000000000001'::uuid, 'formal_training_scheduled', 'Formal training scheduled: Komang Adi Saputra with Putu Sari Dewi', now() - interval '20 hours'),
+  (pg_temp.u('6281100000005'), '77000000-0000-0000-0000-000000000002'::uuid, 'formal_training_requested', 'Putu Sari Dewi requested a formal training', now() - interval '2 hours')
+) as n(user_id, training_id, type, title, created_at)
+join public.formal_trainings f on f.id = n.training_id;
 
 -- Aksi: checklist templates ----------------------------------------------------
 insert into public.checklist_templates (id, name, kind, brand_id, fail_issue_severity, fail_issue_sla_hours, created_at) values

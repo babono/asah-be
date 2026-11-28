@@ -66,7 +66,8 @@ if (process.argv.includes("--seed")) {
   const { rows } = await db.query(`select
     (select count(*) from public.profiles) people, (select count(*) from public.module_assignments) assignments,
     (select count(*) from public.checklist_runs) runs, (select count(*) from public.checklist_responses) answers,
-    (select count(*) from public.issues) issues, (select count(*) from public.certificates) certificates`);
+    (select count(*) from public.issues) issues, (select count(*) from public.certificates) certificates,
+    (select count(*) from public.formal_trainings) formal_trainings`);
   console.log("✓ seed_demo.sql", rows[0]);
   process.exit(0);
 }
