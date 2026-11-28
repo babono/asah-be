@@ -27,7 +27,7 @@ the migration (daily checklist runs, missed checklists, issue escalation, certif
 | Users and access | `profiles`, `permissions`, `roles`, `role_permissions`, `user_roles` (role + scope: group, brand, area, outlet) |
 | Foundation | `app_settings`, `media_files`, `notifications`, `device_tokens`, `admin_audit_log` |
 | Asuh: learning | `modules`, `module_versions`, `module_target_positions`, `content_blocks`, `questions`, `question_options`, `quizzes`, `quiz_questions`, `rubric_criteria`, `learning_paths`, `learning_path_items`, `module_assignments`, `block_progress`, `quiz_attempts`, `quiz_attempt_answers`, `practical_submissions`, `practical_scores`, `practical_spot_checks`, `certificates` |
-| Asuh: mentorship | `mentorships`, `mentor_checkins`, `mentor_ratings`, `mentor_rating_access_log` |
+| Asuh: mentorship | `mentorships`, `mentor_checkins`, `mentor_ratings`, `mentor_rating_access_log`, `formal_trainings` (added by `20261123000000_formal_trainings.sql`) |
 | Aksi: checklists | `checklist_templates`, `checklist_template_versions`, `checklist_items`, `checklist_template_positions`, `checklist_schedules`, `checklist_runs`, `checklist_responses`, `checklist_response_photos` |
 | Standar: issues | `issues`, `issue_events` (audits are checklist templates of kind `audit`) |
 | Dashboards | views `v_outlet_daily_compliance`, `v_issue_resolution`, `v_training_progress` |
@@ -55,6 +55,7 @@ erDiagram
   profiles ||--o{ mentorships : "mentor or trainee"
   mentorships ||--o{ mentor_checkins : ""
   mentorships ||--o| mentor_ratings : ""
+  mentorships ||--o{ formal_trainings : schedules
   checklist_templates ||--o{ checklist_template_versions : versions
   checklist_template_versions ||--o{ checklist_items : has
   checklist_templates ||--o{ checklist_schedules : runs_on
@@ -75,12 +76,19 @@ erDiagram
   that checks permission first: `start_quiz_attempt`, `submit_quiz_attempt`,
   `submit_practical`, `score_practical`, `review_module_version`, `assign_mentor`,
   `submit_mentor_rating`, `my_mentor_rating`, `mentor_ratings_with_raters`,
+  `request_formal_training`, `respond_formal_training`, `cancel_formal_training`,
   `submit_checklist_run`, `start_audit`, `raise_issue`, `assign_issue`, `fix_issue`,
   `verify_issue`, `my_permissions`.
 - **Separation of duties.** A module's author cannot approve it; whoever fixes an issue
   cannot verify it; a trainee cannot score their own practical test.
 - **Quiz answers stay on the server.** Staff never read `questions` or `question_options`;
   `start_quiz_attempt` serves questions without the correct option and grading is server side.
+- **Formal training sessions.** A mentor or trainee requests a session
+  (`request_formal_training`, 30 minutes by default); only the other one can approve or
+  decline it (`respond_formal_training`), and only before its start time. Approving notifies
+  everyone with `mentorship.view` at the outlet (`formal_training_scheduled`) so managers and
+  HR can attend. Mentor, trainee and those people read `formal_trainings`; nobody writes it
+  directly. Ending a mentorship cancels its upcoming sessions.
 - **Anonymous mentor ratings.** `mentor_ratings` has no read policy. Mentors get an average
   only after 3 ratings (`my_mentor_rating`); only HR and senior management can see raters,
   and every such view is written to `mentor_rating_access_log`.

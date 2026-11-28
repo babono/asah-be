@@ -14,6 +14,7 @@ supabase/
   migrations/
     20261118000000_asah_mvp_schema.sql   the MVP schema: 48 tables, RLS, RPCs, default roles (see SCHEMA.md)
     20261121000000_app_support.sql       additions found while building the app (below)
+    20261123000000_formal_trainings.sql  formal training sessions between mentor and trainee (below)
   functions/
     stream-upload     Cloudflare Stream basic direct upload (≤200 MB) + media_files row; used by the phone app
     stream-tus-upload resumable tus upload (any size) + media_files row; used by the admin web
@@ -100,8 +101,8 @@ never called for test numbers) and set **Test phone numbers and OTPs** to
 | 811 0000 002 | Dewi Lestari, Training manager + HR | Admin web: approve "Handling guest complaints", mentor ratings |
 | 811 0000 003 | Budi Santoso, Area manager (Badung, Denpasar) | App: area view, audit visit |
 | 811 0000 004 | Made Ayu Pratiwi, Outlet manager, Seminyak | App: team, accept the chiller fix, assign issues |
-| 811 0000 005 | Komang Adi Saputra, Captain + Mentor, Seminyak | App: mentor Putu, fix the soap dispenser issue |
-| 811 0000 006 | Putu Sari Dewi, new Server, Seminyak (day 4) | App: eye-contact video and quiz, checklists |
+| 811 0000 005 | Komang Adi Saputra, Captain + Mentor, Seminyak | App: mentor Putu (formal training tomorrow; answer Putu's new request), fix the soap dispenser issue |
+| 811 0000 006 | Putu Sari Dewi, new Server, Seminyak (day 4) | App: eye-contact video and quiz, checklists, formal training with Komang |
 | 811 0000 007 | Wayan Darma, Cook + Mentor, Seminyak | App: fridge temperature log, mentee behind on training |
 
 Dates are relative to when the seed ran, and every day nobody fills the checklists they turn
@@ -130,6 +131,9 @@ npm run demo:reset
   or use a tus client with endpoint `functions/v1/stream-tus-upload?kind=training_video|practical_video`
   (the media id comes back in the `X-Media-File-Id` header). Play with `stream-playback`.
 - Names of colleagues: `rpc('people_names', {p_ids})`.
+- Formal training: read `formal_trainings` (mentor, trainee, and anyone with `mentorship.view`
+  or `mentorship.manage` at the outlet); write only through `request_formal_training`,
+  `respond_formal_training` and `cancel_formal_training` (see below).
 
 ## What `20261121000000_app_support.sql` adds
 
@@ -143,6 +147,19 @@ The MVP schema is unchanged; this migration fills gaps:
 | No storage bucket for photos and PDFs | Private bucket `asah-media`; reading an object requires reading its `media_files` row |
 | Reminders for A2, M3, M4 were not scheduled | `app.remind_due_checklists`, `app.remind_mentor_checkins`, `app.escalate_behind_trainees` |
 | `notifications` rows never reached phones | Trigger → `pg_net` → `push` function → OneSignal; Realtime on `notifications` |
+
+## What `20261123000000_formal_trainings.sql` adds
+
+A formal "on the spot" training session (Asuh) between a mentor and their trainee:
+
+| RPC | Who | What |
+| --- | --- | --- |
+| `request_formal_training(p_mentorship, p_scheduled_at, p_topic, p_note?, p_duration_minutes? = 30)` → id | mentor or trainee of an active mentorship | future time, non-empty topic, no overlap with a pending or approved session; notifies the other side (`formal_training_requested`) |
+| `respond_formal_training(p_training, p_approve, p_note?)` | the other side, not the requester | before the start time only; notifies the requester (`formal_training_approved` / `_declined`); approving also notifies everyone with `mentorship.view` at the outlet (`formal_training_scheduled`) |
+| `cancel_formal_training(p_training, p_reason?)` | mentor or trainee | pending or approved only; notifies the other side, and the higher-ups if it was approved (`formal_training_cancelled`) |
+
+Every notification carries `data = {formal_training_id, mentorship_id, scheduled_at}`. Ending a
+mentorship cancels its upcoming sessions.
 
 ## Deploying
 
@@ -162,15 +179,17 @@ Never change the schema in the dashboard: write a migration, so the repo stays t
 
 ```bash
 npm install
-npm run test:db          # migrations + 65 behaviour checks in PGlite (Postgres in WASM), no Docker
+npm run test:db          # migrations + 98 behaviour checks in PGlite (Postgres in WASM), no Docker
 npm run test:seed        # migrations + seed_demo.sql, then reset and seed again
 npm run check:functions  # type-checks the Edge Functions with Deno
 ```
 
-`test:db` runs `00_supabase_stub.sql` (auth, storage, vault and pg_net stand-ins), both migrations,
+`test:db` runs `00_supabase_stub.sql` (auth, storage, vault and pg_net stand-ins), the migrations,
 then `10_behaviour_tests.sql` (40 checks: least privilege, separation of duties, quiz grading,
 practical tests, checklist submit with geofence, issues, anonymous ratings, deactivation) and
-`20_app_support_tests.sql` (25 checks for the second migration).
+`20_app_support_tests.sql` (25 checks for the second migration) and `30_formal_training_tests.sql`
+(33 checks: request, approve, decline rules, visibility by outlet, overlap, expiry, cancel,
+notifications, no direct writes).
 
 Not covered yet: the Edge Functions against live Cloudflare Stream and OneSignal, and pg_cron
 scheduling (the job functions themselves are tested).
