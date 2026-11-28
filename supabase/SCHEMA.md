@@ -30,6 +30,7 @@ the migration (daily checklist runs, missed checklists, issue escalation, certif
 | Asuh: mentorship | `mentorships`, `mentor_checkins`, `mentor_ratings`, `mentor_rating_access_log`, `formal_trainings` (added by `20261123000000_formal_trainings.sql`) |
 | Aksi: checklists | `checklist_templates`, `checklist_template_versions`, `checklist_items`, `checklist_template_positions`, `checklist_schedules`, `checklist_runs`, `checklist_responses`, `checklist_response_photos` |
 | Standar: issues | `issues`, `issue_events` (audits are checklist templates of kind `audit`) |
+| Aksi: AI photo check | `ai_photo_checks`, view `v_ai_check_agreement`; `checklist_items.ai_check_enabled` / `ai_criteria` (added by `20261128000000_ai_photo_check.sql`) |
 | Dashboards | views `v_outlet_daily_compliance`, `v_issue_resolution`, `v_training_progress` |
 
 ```mermaid
@@ -64,6 +65,8 @@ erDiagram
   outlets ||--o{ issues : ""
   checklist_responses ||--o| issues : raises
   issues ||--o{ issue_events : history
+  checklist_responses ||--o{ ai_photo_checks : "photo checked by AI"
+  ai_photo_checks |o--o| issues : flags
 ```
 
 ## How access works

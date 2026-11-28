@@ -6,7 +6,8 @@
     "test:db": "node supabase/tests/run.mjs",
     "test:seed": "node supabase/tests/run.mjs --seed",
     "demo:reset": "supabase db query --linked -f supabase/demo_reset.sql && supabase db query --linked -f supabase/seed_demo.sql",
-    "check:functions": "npx --yes deno@2 check --config supabase/functions/deno.json supabase/functions/*/index.ts"
+    "check:functions": "npx --yes deno@2 check --config supabase/functions/deno.json supabase/functions/*/index.ts",
+    "test:functions": "npx --yes deno@2 test --config supabase/functions/deno.json supabase/functions/"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.17"
